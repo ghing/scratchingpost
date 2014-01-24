@@ -6,9 +6,17 @@ var Spreadsheet = require('edit-google-spreadsheet');
 var redis = require('redis');
 var async = require('async');
 
-var client = redis.createClient();
+if (process.env.REDISTOGO_URL) {
+  var rtg   = require("url").parse(process.env.REDISTOGO_URL);
+  var redisClient = require("redis").createClient(rtg.port, rtg.hostname);
 
-client.on("error", function (err) {
+  redisClient.auth(rtg.auth.split(":")[1]);  
+}
+else {
+  var redisClient = redis.createClient();
+}
+
+redisClient.on("error", function (err) {
   console.log("Error " + err);
 });
 
@@ -28,7 +36,7 @@ var rowsToAdd = [];
 var SEEN_KEY = 'scratchingpost:jobs:seen';
 
 function handleJob(job, callback) {
-  client.sismember(SEEN_KEY, job.id, function(err, res) {
+  redisClient.sismember(SEEN_KEY, job.id, function(err, res) {
     if (res === 0) {
       rowsToAdd.push([
         job.created,
@@ -78,7 +86,7 @@ api.export({
               process.exit();
             }
 
-            client.sadd(SEEN_KEY, jobIds, function(err) {
+            redisClient.sadd(SEEN_KEY, jobIds, function(err) {
               process.exit();
             });
           });
