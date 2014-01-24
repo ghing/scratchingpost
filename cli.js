@@ -3,6 +3,14 @@
 var program = require('commander');
 var biplane = require('biplane');
 var Spreadsheet = require('edit-google-spreadsheet');
+var redis = require('redis');
+var async = require('async');
+
+var client = redis.createClient();
+
+client.on("error", function (err) {
+  console.log("Error " + err);
+});
 
 program.version('0.0.1')
   .option('-d, --debug', 'Show debugging information')
@@ -14,30 +22,14 @@ var api = new biplane.Biplane({
   password: process.env.SCRATCHINGPOST_PASSWORD
 });
 
-api.export({
-  date: 'today'
-}, function(jobs) {
-  var rowsToAdd = [];
-  var job;
 
-  /*
-{ deliverAfter: '2014-01-21 09:49:14-06:00',
-  orderDate: '2014-01-21 09:49:14-06:00',
-  created: '2014-01-21 09:49:18.053170-06:00',
-  ownerId: '2918100',
-  orderTotal: 27.29,
-  id: '24848001',
-  deliverTo: '596 W Hawthorne Pl305\nChicago, IL 60657',
-  clientId: '1042001',
-  status: 'complete',
-  tip: 3.56,
-  paymentMethod: 'prepaid',
-  deliveryFee: 4 }
-   */
+var jobIds = [];
+var rowsToAdd = [];
+var SEEN_KEY = 'scratchingpost:jobs:seen';
 
-  for (var i = 0; i < jobs.length; i++) {
-    job = jobs[i];
-    if (job.status === 'complete') {
+function handleJob(job, callback) {
+  client.sismember(SEEN_KEY, job.id, function(err, res) {
+    if (res === 0) {
       rowsToAdd.push([
         job.created,
         job.id,
@@ -49,25 +41,49 @@ api.export({
         job.deliveryFee,
         job.paymentMethod
       ]);
+      jobIds.push(job.id);
     }
-  }
 
-  Spreadsheet.create({
-    debug: program.debug, 
-    username: process.env.SCRATCHINGPOST_USERNAME, 
-    password: process.env.SCRATCHINGPOST_PASSWORD, 
-    spreadsheetId: process.env.SCRATCHINGPOST_SPREADSHEET_ID,
-    worksheetId: process.env.SCRATCHINGPOST_WORKSHEET_ID,
-    callback: function(err, sheet) {
-      if (err) throw err;
-      sheet.receive(function(err, rows, info) {
-        var data = {};
-        data[info.nextRow] = rowsToAdd; 
-        sheet.add(data);
-        sheet.send({
-          autoSize: true
-        });
-      });
+    callback();
+  });
+}
+
+api.export({
+  status: 'complete',
+  date: 'today'
+}, function(jobs) {
+  async.each(jobs, handleJob, function() {
+    if (rowsToAdd.length === 0) {
+      console.log("No new jobs");
+      process.exit();
     }
+
+    Spreadsheet.create({
+      debug: program.debug, 
+      username: process.env.SCRATCHINGPOST_USERNAME, 
+      password: process.env.SCRATCHINGPOST_PASSWORD, 
+      spreadsheetId: process.env.SCRATCHINGPOST_SPREADSHEET_ID,
+      worksheetId: process.env.SCRATCHINGPOST_WORKSHEET_ID,
+      callback: function(err, sheet) {
+        if (err) throw err;
+        sheet.receive(function(err, rows, info) {
+          var data = {};
+          data[info.nextRow] = rowsToAdd; 
+          sheet.add(data);
+          sheet.send({
+            autoSize: true
+          }, function(err) {
+            if (err) {
+              console.log(err);
+              process.exit();
+            }
+
+            client.sadd(SEEN_KEY, jobIds, function(err) {
+              process.exit();
+            });
+          });
+        });
+      }
+    });
   });
 });

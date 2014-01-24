@@ -11,7 +11,9 @@
   "dependencies": {
     "biplane": "git+https://github.com/ghing/node-biplane.git",
     "edit-google-spreadsheet": "~0.2.2",
-    "commander": "~2.1.0"
+    "commander": "~2.1.0",
+    "redis": "~0.10.0",
+    "async": "~0.2.10"
   },
   "bin": {
     "scratchingpost": "./cli.js"
