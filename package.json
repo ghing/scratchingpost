@@ -16,6 +16,7 @@
     "async": "~0.2.10"
   },
   "bin": {
-    "scratchingpost": "./cli.js"
+    "sp": "./commands/sp",
+    "sp-kits2sheet": "./commands/sp-kits2sheet"
   }
 }
