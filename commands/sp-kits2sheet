@@ -35,11 +35,33 @@ var jobIds = [];
 var rowsToAdd = [];
 var SEEN_KEY = 'scratchingpost:jobs:seen';
 
+/**
+ * Returns a zero-padded string representations of the minutes or seconds
+ * portion of time.
+ */
+function zeroPad(d) {
+  var s = "" + d;
+  if (s.length == 1) {
+    s = "0" + s;
+  }
+  return s;
+}
+
+/**
+ * Format a Date object in a format recognized by Google Spreadsheets.
+ */
+function formatDate(date) {
+  return (date.getMonth() + 1) + "/" + date.getDate() + "/" + date.getFullYear() + " " + date.getHours() + ":" + zeroPad(date.getMinutes()) + ":" + zeroPad(date.getSeconds());;
+}
+
 function handleJob(job, callback) {
   redisClient.sismember(SEEN_KEY, job.id, function(err, res) {
+    var date;
+
     if (res === 0) {
+      date = new Date(job.created);
       rowsToAdd.push([
-        job.created,
+        formatDate(date),
         job.id,
         job.ownerId,
         job.clientId,
@@ -85,6 +107,8 @@ api.export({
               console.log(err);
               process.exit();
             }
+
+            console.log("Uploaded " + rowsToAdd.length + " jobs");
 
             redisClient.sadd(SEEN_KEY, jobIds, function(err) {
               process.exit();
