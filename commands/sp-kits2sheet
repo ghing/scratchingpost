@@ -25,7 +25,7 @@ program.version('0.0.1')
   .parse(process.argv);
 
 var api = new biplane.Biplane({
-  baseUrl: 'https://kittiesinthesky.appspot.com/',
+  baseUrl: process.env.SCRATCHINGPOST_AIRPLANE_URL, 
   username: process.env.SCRATCHINGPOST_USERNAME,
   password: process.env.SCRATCHINGPOST_PASSWORD
 });
