@@ -45,6 +45,7 @@ function handleJob(job, callback) {
     if (res === 0) {
       rowsToAdd.push([
         moment(job.created).format(spreadsheetFormat),
+        moment(job.deliverAfter).format(spreadsheetFormat),
         job.id,
         job.ownerId,
         job.clientId,
