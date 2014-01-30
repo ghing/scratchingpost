@@ -5,9 +5,10 @@ var biplane = require('biplane');
 var Spreadsheet = require('edit-google-spreadsheet');
 var redis = require('redis');
 var async = require('async');
+var moment = require('moment');
 
 if (process.env.REDISTOGO_URL) {
-  var rtg   = require("url").parse(process.env.REDISTOGO_URL);
+  var rtg = require("url").parse(process.env.REDISTOGO_URL);
   var redisClient = require("redis").createClient(rtg.port, rtg.hostname);
 
   redisClient.auth(rtg.auth.split(":")[1]);  
@@ -30,38 +31,20 @@ var api = new biplane.Biplane({
   password: process.env.SCRATCHINGPOST_PASSWORD
 });
 
-
 var jobIds = [];
 var rowsToAdd = [];
 var SEEN_KEY = 'scratchingpost:jobs:seen';
-
-/**
- * Returns a zero-padded string representations of the minutes or seconds
- * portion of time.
- */
-function zeroPad(d) {
-  var s = "" + d;
-  if (s.length == 1) {
-    s = "0" + s;
-  }
-  return s;
-}
-
-/**
- * Format a Date object in a format recognized by Google Spreadsheets.
- */
-function formatDate(date) {
-  return (date.getMonth() + 1) + "/" + date.getDate() + "/" + date.getFullYear() + " " + date.getHours() + ":" + zeroPad(date.getMinutes()) + ":" + zeroPad(date.getSeconds());;
-}
+// Date format for querying KITS
+var queryFormat = 'MM-DD-YYYY';
+// Date format for writing to Google Spreadsheet
+var spreadsheetFormat = 'MM/DD/YYYY HH:mm:ss';
+var yesterday = moment().subtract('days', 1);
 
 function handleJob(job, callback) {
   redisClient.sismember(SEEN_KEY, job.id, function(err, res) {
-    var date;
-
     if (res === 0) {
-      date = new Date(job.created);
       rowsToAdd.push([
-        formatDate(date),
+        moment(job.created).format(spreadsheetFormat),
         job.id,
         job.ownerId,
         job.clientId,
@@ -80,7 +63,8 @@ function handleJob(job, callback) {
 
 api.export({
   status: 'complete',
-  date: 'today'
+  start: yesterday.format(queryFormat),
+  end: moment().format(queryFormat)
 }, function(jobs) {
   async.each(jobs, handleJob, function() {
     if (rowsToAdd.length === 0) {
