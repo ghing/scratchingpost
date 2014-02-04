@@ -60,6 +60,43 @@ function sameJobs(kitsJobs, sheetJobs, callback) {
   }
 }
 
+function jobsMatch(kitsJobs, sheetJobs, callback) {
+  var errs = {};
+  var matching = true;
+
+  var kitsJobsById = _.indexBy(kitsJobs, function(job) {
+    return job.id;
+  });
+
+  var sheetJobsById = _.indexBy(sheetJobs, function(job) {
+    return job.id;
+  });
+
+  _.each(kitsJobs, function(job) {
+    var sheetJob = sheetJobsById[job.id];
+
+    if (sheetJob) {
+      if (sheetJob.ownerId != job.ownerId ||
+          sheetJob.deliveryFee != job.deliveryFee ||
+          sheetJob.tip != job.tip) {
+        errs[job.id] = {
+          kits: job,
+          sheet: sheetJob
+        }; 
+
+        matching = false;
+      } 
+    }
+  });
+
+  if (matching) {
+    return callback(null);
+  }
+  else {
+    return callback();
+  }
+}
+
 function noDupes(kitsJobs, sheetJobs, callback) {
   var seen = {};
   dupes = [];
@@ -146,6 +183,8 @@ var query = {
   sq: 'deliverafter >= ' + date.format(spreadsheetQueryFormat) + ' and deliverafter < ' + moment(date).add('days', 1).format(spreadsheetQueryFormat)
 };
 
+// deliverafter >= 2/1/2014 and deliverafter < 2/2/2014
+
 async.parallel([
   function(callback) {
     sheet.setAuth(username, password, function(err) {
@@ -175,30 +214,63 @@ function(err, results) {
     kitsJobs = results[0];
     ssJobs = _.map(results[1], normalizeSpreadsheetJob);
   }
-  
-  countsEqual(kitsJobs, ssJobs, function(err) {
-    if (err) {
-      process.stderr.write("Job counts are not equal. " + kitsJobs.length + " jobs in KITS and " + ssJobs.length + " in spreadsheet\n");
-    
-      sameJobs(kitsJobs, ssJobs, function(err) {
-        if (err) {
-          process.stderr.write("Jobs in KITS and spreadsheet differ\n");
-      
-          _.each(err.notInSpreadsheet, function(job) {
-            process.stderr.write(job.id + " in KITS but not in spreadsheet\n");
-            process.stderr.write(util.inspect(job) + "\n");
-          }); 
 
-          _.each(err.notInKits, function(job) {
-            process.stderr.write(job.id + " in spreadsheet but not in KITS\n");
-            process.stderr.write(util.inspect(job) + "\n");
+  async.parallel([
+    function(callback) {
+      countsEqual(kitsJobs, ssJobs, function(err) {
+        if (err) {
+          process.stderr.write("Job counts are not equal. " + kitsJobs.length + " jobs in KITS and " + ssJobs.length + " in spreadsheet\n");
+
+          sameJobs(kitsJobs, ssJobs, function(err) {
+            if (err) {
+              process.stderr.write("Jobs in KITS and spreadsheet differ\n");
+
+              _.each(err.notInSpreadsheet, function(job) {
+                process.stderr.write(job.id + " in KITS but not in spreadsheet\n");
+                process.stderr.write(util.inspect(job) + "\n");
+              }); 
+
+              _.each(err.notInKits, function(job) {
+                process.stderr.write(job.id + " in spreadsheet but not in KITS\n");
+                process.stderr.write(util.inspect(job) + "\n");
+              });
+         
+              callback(null, false);
+            }
+            else {
+              process.stdout.write("Jobs in KITS and spreadsheet match\n");
+              callback(null, true);
+            }
           });
         }
+        else {
+          callback(null, true);
+        }
+      });
+    },
 
-        process.exit(1);
+    function(callback) {
+      jobsMatch(kitsJobs, ssJobs, function(err) {
+        if (err) {
+          _.each(err, function(job, id) {
+            process.stderr.write("Job " + id + " does not match between KITS and the spreadsheet\n");
+            process.stderr.write(util.inspect(job.kits) + "\n");
+            process.stderr.write(util.inspect(job.sheet) + "\n");
+          });
+          
+          callback(null, false);
+        }
+        else {
+          process.stdout.write("Job attributes in KITS and spreadsheet match\n");        
+          callback(null, true);
+        }
       });
     }
-    
-    process.stdout.write("Jobs in KITS and spreadsheet match\n");
+  ], function(err, results) {
+    if (results[0] && results[1]) {
+      process.exit(0);
+    }
+
+    process.exit(1);
   });
 });
