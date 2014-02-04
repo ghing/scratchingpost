@@ -14,10 +14,13 @@
     "commander": "~2.1.0",
     "redis": "~0.10.0",
     "async": "~0.2.10",
-    "moment": "~2.5.1"
+    "moment": "~2.5.1",
+    "google-spreadsheet": "~0.2.6",
+    "lodash": "~2.4.1"
   },
   "bin": {
     "sp": "./commands/sp",
-    "sp-kits2sheet": "./commands/sp-kits2sheet"
+    "sp-kits2sheet": "./commands/sp-kits2sheet",
+    "sp-validatesheet": "./commands/sp-validatesheet"
   }
 }

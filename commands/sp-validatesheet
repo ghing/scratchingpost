@@ -1,0 +1,188 @@
+#!/usr/bin/env node
+
+// Validate jobs exported using sp-kits2sheet
+
+var program = require('commander');
+var GoogleSpreadsheet = require("google-spreadsheet");
+var moment = require('moment');
+var async = require('async');
+var biplane = require('biplane');
+var _ = require('lodash');
+
+function countsEqual(kitsJobs, sheetJobs, errCallback) {
+  if (kitsJobs.length !== sheetJobs.length) {
+    errCallback();
+  }
+}
+
+function sameJobs(kitsJobs, sheetJobs, errCallback) {
+  var kitsJobsById = {};
+  var sheetJobsById = {};
+  var err = {
+    notInSpreadsheet: [],
+    notInKits: []
+  };
+  var job;
+
+  for (var i = 0; i < kitsJobs.length; i++) {
+    job = kitsJobs[i];
+    kitsJobsById[job.id] = job;
+  }
+
+  for (var i = 0; i < sheetJobs.length; i++) {
+    job = sheetJobs[i];
+    sheetJobsById[job.id] = job;
+  }
+
+  for (var i = 0; i < kitsJobs.length; i++) {
+    job = kitsJobs[i];
+    if (!(sheetJobsById[job.id])) {
+      err.notInSpreadsheet.push(job);
+    }
+  }
+
+  for (var i = 0; i < sheetJobs.length; i++) {
+    job = sheetJobs[i];
+    if (!(kitsJobsById[job.id])) {
+      err.notInKits.push(job);
+    }
+  }
+  
+  if (err.notInSpreadsheet.length > 0 || err.notInKits.length > 0) {
+    errCallback(err);
+  } 
+}
+
+function noDupes(kitsJobs, sheetJobs, errCallback) {
+  var seen = {};
+  dupes = [];
+  var job;
+
+  for (var i = 0; i < sheetJobs.length; i++) {
+    job = sheetJobs[i];
+    if (seen[job.id]) {
+      dupes.push(job); 
+    }
+
+    seen[job.id] = true;
+  }
+
+  if (dupes.length > 0) {
+    errCallback(dupes);
+  }
+}
+
+function normalizeSpreadsheetJob(job) {
+  return {
+    id: job.orderid,
+    created: job.created,
+    deliverAfter: job.deliverafter,
+    ownerId: job.ownerid,
+    clientId: job.clientid, 
+    orderTotal: job.total,
+    tip: job.tip,
+    deliveryFee: job.deliveryfee,
+    paymentMethod: job.paymentmethod
+  };
+}
+
+program.version('0.0.1')
+  .parse(process.argv);
+
+if (program.args.length < 1) {
+  process.stderr.write("You must specify a date.\n");
+  process.exit(1);
+}
+
+var date = program.args[0];
+
+if (!date.match(/\d{4}-\d{2}-\d{2}/)) {
+  process.stderr.write("Date must be in the format 'YYYY-MM-DD'\n");
+  process.exit(1);
+}
+
+// Convert date string to moment
+date = moment(date);
+
+var spreadsheetId = process.env.SCRATCHINGPOST_SPREADSHEET_ID;
+
+if (!spreadsheetId) {
+  process.stderr.write("The environment varianle SCRATCHINGPOST_SPREADSHEET_ID needs to be set to the ID of the Google Spreadsheet.\n");
+  process.exit(1);
+}
+
+var username = process.env.SCRATCHINGPOST_USERNAME;
+var password = process.env.SCRATCHINGPOST_PASSWORD;
+
+if (!(username && password)) {
+  process.stderr.write("You must specify a Google Account username and password in the SCRATCHINGPOST_USERNAME and SCRATCHINGPOST_PASSWORD environment variables.\n");
+  process.exit(1);
+}
+
+if (!process.env.SCRATCHINGPOST_AIRPLANE_URL) {
+  process.stderr.write("You must specify the the base URL of KITS in the SCRATCHINGPOST_AIRPLANE_URL environment variable\n");
+  process.exit(1);
+} 
+     
+var api = new biplane.Biplane({
+  baseUrl: process.env.SCRATCHINGPOST_AIRPLANE_URL, 
+  username: process.env.SCRATCHINGPOST_USERNAME,
+  password: process.env.SCRATCHINGPOST_PASSWORD
+});
+// @todo: These format strings are also used in sp-kits2sheet. It might
+// make sense to save them somewhere more centralized.
+var spreadsheetQueryFormat = "M/D/YYYY";
+// Date format for querying KITS
+var kitsQueryFormat = 'MM-DD-YYYY';
+var sheet = new GoogleSpreadsheet(spreadsheetId);
+var query = {
+  sq: 'deliverafter >= ' + date.format(spreadsheetQueryFormat) + ' and deliverafter < ' + moment(date).add('days', 1).format(spreadsheetQueryFormat)
+};
+
+async.parallel([
+  function(callback) {
+    sheet.setAuth(username, password, function(err) {
+      sheet.getRows(1, {}, query, function(err, rows) {
+        callback(null, rows);
+      });
+    });
+  },
+  function(callback) {
+    api.export({
+      status: 'complete',
+      start: date.format(kitsQueryFormat),
+      end: date.format(kitsQueryFormat)
+    }, function(jobs) {
+      callback(null, jobs);
+    });
+  }
+],
+function(err, results) {
+  var ssJobs, kitsJobs;
+  var code = 0;
+  
+  if (results[0][0]._xml) {
+    ssJobs = _.map(results[0], normalizeSpreadsheetJob);
+    kitsJobs = results[1];
+  }
+  else {
+    kitsJobs = results[0];
+    ssJobs = _.map(results[1], normalizeSpreadsheetJob);
+  }
+  
+  countsEqual(kitsJobs, ssJobs, function() {
+    process.stderr.write("Job counts are not equal. " + kitsJobs.length + " jobs in KITS and " + ssJobs.length + " in spreadsheet\n");
+    
+    sameJobs(kitsJobs, ssJobs, function(err) {
+      process.stderr.write("Jobs in KITS and spreadsheet differ\n");
+      
+      _.each(err.notInSpreadsheet, function(job) {
+        process.stderr.write(job.id + " in KITS but not in spreadsheet\n");
+      }); 
+
+      _.each(err.notInKits, function(job) {
+        process.stderr.write(job.id + " in spreadsheet but not in KITS\n");
+      });
+    });
+  });
+});
