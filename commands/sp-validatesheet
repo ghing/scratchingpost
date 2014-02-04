@@ -8,14 +8,18 @@ var moment = require('moment');
 var async = require('async');
 var biplane = require('biplane');
 var _ = require('lodash');
+var util = require('util');
 
-function countsEqual(kitsJobs, sheetJobs, errCallback) {
+function countsEqual(kitsJobs, sheetJobs, callback) {
   if (kitsJobs.length !== sheetJobs.length) {
-    errCallback();
+    callback(true);
+  }
+  else {
+    callback(null);
   }
 }
 
-function sameJobs(kitsJobs, sheetJobs, errCallback) {
+function sameJobs(kitsJobs, sheetJobs, callback) {
   var kitsJobsById = {};
   var sheetJobsById = {};
   var err = {
@@ -49,11 +53,14 @@ function sameJobs(kitsJobs, sheetJobs, errCallback) {
   }
   
   if (err.notInSpreadsheet.length > 0 || err.notInKits.length > 0) {
-    errCallback(err);
+    callback(err);
   } 
+  else {
+    callback(null);
+  }
 }
 
-function noDupes(kitsJobs, sheetJobs, errCallback) {
+function noDupes(kitsJobs, sheetJobs, callback) {
   var seen = {};
   dupes = [];
   var job;
@@ -68,7 +75,7 @@ function noDupes(kitsJobs, sheetJobs, errCallback) {
   }
 
   if (dupes.length > 0) {
-    errCallback(dupes);
+    callback(dupes);
   }
 }
 
@@ -159,7 +166,6 @@ async.parallel([
 ],
 function(err, results) {
   var ssJobs, kitsJobs;
-  var code = 0;
   
   if (results[0][0]._xml) {
     ssJobs = _.map(results[0], normalizeSpreadsheetJob);
@@ -170,19 +176,27 @@ function(err, results) {
     ssJobs = _.map(results[1], normalizeSpreadsheetJob);
   }
   
-  countsEqual(kitsJobs, ssJobs, function() {
-    process.stderr.write("Job counts are not equal. " + kitsJobs.length + " jobs in KITS and " + ssJobs.length + " in spreadsheet\n");
+  countsEqual(kitsJobs, ssJobs, function(err) {
+    if (err) {
+      process.stderr.write("Job counts are not equal. " + kitsJobs.length + " jobs in KITS and " + ssJobs.length + " in spreadsheet\n");
     
-    sameJobs(kitsJobs, ssJobs, function(err) {
-      process.stderr.write("Jobs in KITS and spreadsheet differ\n");
+      sameJobs(kitsJobs, ssJobs, function(err) {
+        if (err) {
+          process.stderr.write("Jobs in KITS and spreadsheet differ\n");
       
-      _.each(err.notInSpreadsheet, function(job) {
-        process.stderr.write(job.id + " in KITS but not in spreadsheet\n");
-      }); 
+          _.each(err.notInSpreadsheet, function(job) {
+            process.stderr.write(job.id + " in KITS but not in spreadsheet\n");
+            process.stderr.write(util.inspect(job) + "\n");
+          }); 
 
-      _.each(err.notInKits, function(job) {
-        process.stderr.write(job.id + " in spreadsheet but not in KITS\n");
+          _.each(err.notInKits, function(job) {
+            process.stderr.write(job.id + " in spreadsheet but not in KITS\n");
+            process.stderr.write(util.inspect(job) + "\n");
+          });
+        }
+
+        process.exit(1);
       });
-    });
+    }
   });
 });
