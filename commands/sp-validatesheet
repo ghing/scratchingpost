@@ -198,5 +198,7 @@ function(err, results) {
         process.exit(1);
       });
     }
+    
+    process.stdout.write("Jobs in KITS and spreadsheet match\n");
   });
 });
