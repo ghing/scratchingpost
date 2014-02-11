@@ -6,6 +6,7 @@ var Spreadsheet = require('edit-google-spreadsheet');
 var redis = require('redis');
 var async = require('async');
 var moment = require('moment');
+var _ = require('lodash');
 
 if (process.env.REDISTOGO_URL) {
   var rtg = require("url").parse(process.env.REDISTOGO_URL);
@@ -31,6 +32,7 @@ var api = new biplane.Biplane({
   password: process.env.SCRATCHINGPOST_PASSWORD
 });
 
+var profilesById;
 var jobIds = [];
 var rowsToAdd = [];
 var SEEN_KEY = 'scratchingpost:jobs:seen';
@@ -43,12 +45,16 @@ var yesterday = moment().subtract('days', 1);
 function handleJob(job, callback) {
   redisClient.sismember(SEEN_KEY, job.id, function(err, res) {
     if (res === 0) {
+      var ownerProfile = profilesById[job.ownerId];
+      var clientProfile = profilesById[job.clientId];
       rowsToAdd.push([
         moment(job.created).format(spreadsheetFormat),
         moment(job.deliverAfter).format(spreadsheetFormat),
         job.id,
         job.ownerId,
+        ownerProfile ? ownerProfile.name : '',
         job.clientId,
+        clientProfile ? clientProfile.name : '',
         job.deliverTo,
         job.orderTotal,
         job.tip,
@@ -62,45 +68,50 @@ function handleJob(job, callback) {
   });
 }
 
-api.export({
-  status: 'complete',
-  start: yesterday.format(queryFormat),
-  end: moment().format(queryFormat)
-}, function(jobs) {
-  async.each(jobs, handleJob, function() {
-    if (rowsToAdd.length === 0) {
-      console.log("No new jobs");
-      process.exit();
-    }
+api.profiles(function(profiles) {
+  // @todo: Cache profiles
+  profilesById = _.indexBy(profiles, 'id');
 
-    Spreadsheet.create({
-      debug: program.debug, 
-      username: process.env.SCRATCHINGPOST_USERNAME, 
-      password: process.env.SCRATCHINGPOST_PASSWORD, 
-      spreadsheetId: process.env.SCRATCHINGPOST_SPREADSHEET_ID,
-      worksheetId: process.env.SCRATCHINGPOST_WORKSHEET_ID,
-      callback: function(err, sheet) {
-        if (err) throw err;
-        sheet.receive(function(err, rows, info) {
-          var data = {};
-          data[info.nextRow] = rowsToAdd; 
-          sheet.add(data);
-          sheet.send({
-            autoSize: true
-          }, function(err) {
-            if (err) {
-              console.log(err);
-              process.exit();
-            }
+  api.export({
+    status: 'complete',
+    start: yesterday.format(queryFormat),
+    end: moment().format(queryFormat)
+  }, function(jobs) {
+    async.each(jobs, handleJob, function() {
+      if (rowsToAdd.length === 0) {
+        console.log("No new jobs");
+        process.exit();
+      }
 
-            console.log("Uploaded " + rowsToAdd.length + " jobs");
+      Spreadsheet.create({
+        debug: program.debug, 
+        username: process.env.SCRATCHINGPOST_USERNAME, 
+        password: process.env.SCRATCHINGPOST_PASSWORD, 
+        spreadsheetId: process.env.SCRATCHINGPOST_SPREADSHEET_ID,
+        worksheetId: process.env.SCRATCHINGPOST_WORKSHEET_ID,
+        callback: function(err, sheet) {
+          if (err) throw err;
+          sheet.receive(function(err, rows, info) {
+            var data = {};
+            data[info.nextRow] = rowsToAdd; 
+            sheet.add(data);
+            sheet.send({
+              autoSize: true
+            }, function(err) {
+              if (err) {
+                console.log(err);
+                process.exit();
+              }
 
-            redisClient.sadd(SEEN_KEY, jobIds, function(err) {
-              process.exit();
+              console.log("Uploaded " + rowsToAdd.length + " jobs");
+
+              redisClient.sadd(SEEN_KEY, jobIds, function(err) {
+                process.exit();
+              });
             });
           });
-        });
-      }
+        }
+      });
     });
   });
 });
