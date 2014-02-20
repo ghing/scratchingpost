@@ -16,7 +16,9 @@
     "async": "~0.2.10",
     "moment": "~2.5.1",
     "google-spreadsheet": "~0.2.6",
-    "lodash": "~2.4.1"
+    "lodash": "~2.4.1",
+    "googleapis": "~0.6.1",
+    "csv": "~0.3.7"
   },
   "bin": {
     "sp": "./commands/sp",

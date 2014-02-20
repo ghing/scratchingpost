@@ -1,0 +1,123 @@
+#!/usr/bin/env node
+
+var program = require('commander');
+var biplane = require('biplane');
+var redis = require('redis');
+var async = require('async');
+var moment = require('moment');
+var _ = require('lodash');
+var googleapis = require('googleapis');
+var JWT = googleapis.auth.JWT;
+var csv = require('csv');
+
+if (process.env.REDISTOGO_URL) {
+  var rtg = require("url").parse(process.env.REDISTOGO_URL);
+  var redisClient = require("redis").createClient(rtg.port, rtg.hostname);
+
+  redisClient.auth(rtg.auth.split(":")[1]);  
+}
+else {
+  var redisClient = redis.createClient();
+}
+
+redisClient.on("error", function (err) {
+  console.log("Error " + err);
+});
+
+program.version('0.0.1')
+  .option('-d, --debug', 'Show debugging information')
+  .parse(process.argv);
+
+var api = new biplane.Biplane({
+  baseUrl: process.env.SCRATCHINGPOST_AIRPLANE_URL, 
+  username: process.env.SCRATCHINGPOST_USERNAME,
+  password: process.env.SCRATCHINGPOST_PASSWORD
+});
+
+var profilesById;
+var jobIds = [];
+var rowsToAdd = [];
+var SEEN_KEY = 'scratchingpost:jobs:seen';
+// Date format for querying KITS
+var queryFormat = 'MM-DD-YYYY';
+// Date format for writing to Google Spreadsheet
+var spreadsheetFormat = 'MM/DD/YYYY HH:mm:ss';
+var yesterday = moment().subtract('days', 1);
+
+function handleJob(job, callback) {
+  redisClient.sismember(SEEN_KEY, job.id, function(err, res) {
+    if (res === 0) {
+      var ownerProfile = profilesById[job.ownerId];
+      var clientProfile = profilesById[job.clientId];
+      rowsToAdd.push([
+        moment(job.created).format(spreadsheetFormat),
+        moment(job.deliverAfter).format(spreadsheetFormat),
+        job.id,
+        job.ownerId,
+        ownerProfile ? ownerProfile.name : '',
+        job.clientId,
+        clientProfile ? clientProfile.name : '',
+        job.deliverTo,
+        job.orderTotal,
+        job.tip,
+        job.deliveryFee,
+        job.paymentMethod
+      ]);
+      jobIds.push(job.id);
+    }
+
+    callback();
+  });
+}
+
+var tableId = process.env.SCRATCHINGPOST_RIDES_TABLE_ID;
+var jwtClient = new JWT(
+  process.env.SCRATCHINGPOST_SERVICE_EMAIL,
+  null,
+  process.env.SCRATCHINGPOST_SERVICE_PRIVATE_KEY,
+  ['https://www.googleapis.com/auth/fusiontables']
+);
+
+api.profiles(function(profiles) {
+  // @todo: Cache profiles
+  profilesById = _.indexBy(profiles, 'id');
+
+  api.export({
+    status: 'complete',
+    start: yesterday.format(queryFormat),
+    end: moment().format(queryFormat)
+  }, function(jobs) {
+    async.each(jobs, handleJob, function() {
+      if (rowsToAdd.length === 0) {
+        console.log("No new jobs");
+        process.exit();
+      }
+
+      csv().from.array(rowsToAdd).to.string(function(data, count) {
+        jwtClient.authorize(function() {
+          googleapis.discover('fusiontables', 'v1').execute(function(err, client) {
+            var req = client.fusiontables.table.importRows({
+              tableId: tableId
+            })
+            .withMedia('application/octet-stream', data)
+            .withAuthClient(jwtClient);
+
+            req.execute(function(err, result) {
+              if (err) {
+                console.log("Error uploading data to Fusion Table");
+                process.exit(1);
+              }
+
+              console.log("Uploaded " + rowsToAdd.length + " jobs");
+              redisClient.sadd(SEEN_KEY, jobIds, function(err) {
+                 process.exit();
+              });
+            });
+          });
+        });
+      });
+
+
+    });
+  });
+});
